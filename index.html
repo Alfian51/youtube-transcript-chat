@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Search Timestamp</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-6">
+
+    <div class="max-w-4xl mx-auto space-y-6">
+        <!-- Header & Search Bar -->
+        <header class="text-center">
+            <h1 class="text-3xl font-bold text-gray-800">Cari Kata Kunci di Video</h1>
+            <div class="mt-4 flex justify-center gap-2">
+                <input type="text" id="searchInput" placeholder="Ketik kata kunci (misal: informasi)..." 
+                       class="w-2/3 p-3 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="cariVideo()" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700">
+                    Cari
+                </button>
+            </div>
+        </header>
+
+        <!-- Player Video & Hasil -->
+        <main class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+            <!-- Pemutar Video YouTube -->
+            <div class="bg-white p-4 rounded-xl shadow-md">
+                <h2 class="font-bold text-lg mb-2">Video Player</h2>
+                <div class="aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
+                    <div id="youtubePlayer"></div>
+                </div>
+            </div>
+
+            <!-- Daftar Hasil Timestamp -->
+            <div class="bg-white p-4 rounded-xl shadow-md">
+                <h2 class="font-bold text-lg mb-2">Hasil Pencarian Menit</h2>
+                <div id="resultsList" class="space-y-2 max-h-64 overflow-y-auto">
+                    <p class="text-gray-400 text-sm">Silakan ketik kata kunci di atas untuk mencari.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let player = null;
+        let isPlayerReady = false;
+        let currentVideoId = 'L_LUpnjgPso'; 
+
+        // Load YouTube API secara dinamis
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('youtubePlayer', {
+                height: '100%',
+                width: '100%',
+                videoId: currentVideoId, 
+                playerVars: { 'playsinline': 1, 'autoplay': 0 },
+                events: {
+                    'onReady': () => { isPlayerReady = true; }
+                }
+            });
+        }
+
+        // Fungsi melompat ke detik tertentu di video
+        function loadAndSeekVideo(videoId, seconds) {
+            if (isPlayerReady && player) {
+                const currentVideoUrl = player.getVideoUrl ? player.getVideoUrl() : '';
+                if (!currentVideoUrl.includes(videoId)) {
+                    currentVideoId = videoId;
+                    player.loadVideoById({ videoId: videoId, startSeconds: seconds });
+                } else {
+                    player.seekTo(seconds, true);
+                    player.playVideo();
+                }
+            } else {
+                alert("Sistem sedang memuat player YouTube. Harap tunggu sebentar.");
+            }
+        }
+
+        // MENGHUBUNGKAN KE FASTAPI BACKEND
+        async function cariVideo() {
+            const query = document.getElementById('searchInput').value.trim();
+            const resultsList = document.getElementById('resultsList');
+
+            if(!query) return alert('Ketik kata kuncinya dulu!');
+
+            resultsList.innerHTML = `<p class="text-blue-500 font-semibold animate-pulse">Memproses transkrip & mencari kata kunci...</p>`;
+
+            try {
+                // Mengirim permintaan ke endpoint FastAPI
+                const backendUrl = `http://127.0.0.1:5000/api/search?video_id=${currentVideoId}&q=${encodeURIComponent(query)}`;
+                
+                const response = await fetch(backendUrl);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error Status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log("Data diterima dari Backend:", data);
+
+                // Render hasil
+                renderResults(data, query);
+
+            } catch (error) {
+                console.error("Detail Error:", error);
+                resultsList.innerHTML = `
+                    <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-xs">
+                        <p class="font-bold">Gagal terhubung ke Backend!</p>
+                        <p class="mt-1">Pesan error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Render data hasil pencarian
+        function renderResults(data, query) {
+            const resultsList = document.getElementById('resultsList');
+            resultsList.innerHTML = "";
+
+            if (!data || data.length === 0) {
+                resultsList.innerHTML = `<p class="text-gray-400 text-sm">Hasil tidak ditemukan.</p>`;
+                return;
+            }
+
+            data.forEach(item => {
+                const videoCard = document.createElement('div');
+                videoCard.className = "border rounded-lg p-3 bg-gray-50 space-y-2";
+
+                if (!item.matches || item.matches.length === 0) {
+                    videoCard.innerHTML = `
+                        <h3 class="font-bold text-sm text-gray-800">🎬 ${item.title}</h3>
+                        <p class="text-gray-400 text-xs italic">Kata kunci "<mark>${query}</mark>" tidak ditemukan dalam video ini.</p>
+                    `;
+                } else {
+                    let matchesHtml = "";
+                    item.matches.forEach(m => {
+                        const minutes = Math.floor(m.timestamp / 60).toString().padStart(2, '0');
+                        const seconds = Math.floor(m.timestamp % 60).toString().padStart(2, '0');
+
+                        matchesHtml += `
+                            <button onclick="loadAndSeekVideo('${item.videoId}', ${m.timestamp})" 
+                                    class="w-full text-left p-2 rounded bg-white hover:bg-blue-50 border border-gray-200 transition text-xs">
+                                <span class="font-bold text-blue-600">📍 Menit ${minutes}:${seconds}</span>
+                                <p class="text-gray-600 mt-1">${m.text}</p>
+                            </button>
+                        `;
+                    });
+
+                    videoCard.innerHTML = `
+                        <h3 class="font-bold text-sm text-gray-800 line-clamp-1">🎬 ${item.title}</h3>
+                        <div class="space-y-1">${matchesHtml}</div>
+                    `;
+                }
+
+                resultsList.appendChild(videoCard);
+            });
+        }
+    </script>
+</body>
+</html>
