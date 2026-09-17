@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export', // Wajib ditambahkan agar bisa di-hosting ke Firebase
+  output: 'export',
   images: {
-    unoptimized: true, // Wajib ditambahkan karena Firebase tidak mendukung image optimization bawaan Next.js secara static
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",
