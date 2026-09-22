@@ -34,20 +34,18 @@ export async function GET(request: NextRequest) {
     if (videos.length > 0) {
       const firstVideo = videos[0];
       try {
-        const transcript = await getVideoTranscript(firstVideo.videoId);
+        const raw = await require("youtube-transcript").YoutubeTranscript.fetchTranscript(firstVideo.videoId);
         report.transcriptTest = {
           videoId: firstVideo.videoId,
           title: firstVideo.title,
-          status:
-            transcript.length > 0
-              ? `✅ Berhasil (${transcript.length} segmen)`
-              : "❌ Transcript kosong / tidak tersedia",
-          sampleText: transcript.slice(0, 3).map((t) => t.text),
+          status: `✅ Berhasil (${raw.length} segmen)`,
+          sampleText: raw.slice(0, 3).map((t: any) => t.text),
         };
       } catch (err: any) {
         report.transcriptTest = {
           videoId: firstVideo.videoId,
-          status: `❌ Error: ${err?.message || err}`,
+          title: firstVideo.title,
+          status: `❌ Error fetchTranscript: ${err?.message || err}`,
         };
       }
     }
