@@ -34,18 +34,40 @@ export async function GET(request: NextRequest) {
     if (videos.length > 0) {
       const firstVideo = videos[0];
       try {
-        const raw = await require("youtube-transcript").YoutubeTranscript.fetchTranscript(firstVideo.videoId);
+        const resp = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "com.google.android.youtube/20.10.38 (Linux; U; Android 14)",
+          },
+          body: JSON.stringify({
+            context: {
+              client: {
+                clientName: "ANDROID",
+                clientVersion: "20.10.38",
+              },
+            },
+            videoId: firstVideo.videoId,
+          }),
+        });
+
+        const status = resp.status;
+        const data = await resp.json();
+        const hasCaptions = !!data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        const playability = data?.playabilityStatus?.status;
+        const playabilityReason = data?.playabilityStatus?.reason;
+
         report.transcriptTest = {
           videoId: firstVideo.videoId,
           title: firstVideo.title,
-          status: `✅ Berhasil (${raw.length} segmen)`,
-          sampleText: raw.slice(0, 3).map((t: any) => t.text),
+          status: `HTTP ${status}, playability: ${playability} (${playabilityReason || "none"}), hasCaptions: ${hasCaptions}`,
+          trackCount: data?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.length || 0,
         };
       } catch (err: any) {
         report.transcriptTest = {
           videoId: firstVideo.videoId,
           title: firstVideo.title,
-          status: `❌ Error fetchTranscript: ${err?.message || err}`,
+          status: `❌ Error: ${err?.message || err}`,
         };
       }
     }
