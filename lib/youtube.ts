@@ -1,6 +1,53 @@
 export interface YouTubeSearchItem {
   videoId: string;
   title: string;
+  description?: string;
+}
+
+export interface YouTubeVideoDetails {
+  videoId: string;
+  title: string;
+  description: string;
+  tags?: string[];
+}
+
+/**
+ * Mengambil detail video (deskripsi lengkap, tags, judul) dalam 1 batch request.
+ */
+export async function getVideoDetailsBatch(
+  videoIds: string[]
+): Promise<Map<string, YouTubeVideoDetails>> {
+  const map = new Map<string, YouTubeVideoDetails>();
+  if (!videoIds || videoIds.length === 0) return map;
+
+  const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+  if (!apiKey) return map;
+
+  try {
+    const url = new URL("https://www.googleapis.com/youtube/v3/videos");
+    url.searchParams.set("part", "snippet");
+    url.searchParams.set("id", videoIds.join(","));
+    url.searchParams.set("key", apiKey);
+
+    const res = await fetch(url.toString());
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.items)) {
+        for (const item of data.items) {
+          map.set(item.id, {
+            videoId: item.id,
+            title: item.snippet?.title || "",
+            description: item.snippet?.description || "",
+            tags: item.snippet?.tags || [],
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[getVideoDetailsBatch] Gagal fetch video details:`, err);
+  }
+
+  return map;
 }
 
 /**
@@ -34,6 +81,7 @@ export async function searchYouTubeVideos(
           return data.items.map((item: any) => ({
             videoId: item.id.videoId,
             title: item.snippet.title,
+            description: item.snippet.description,
           }));
         }
         return [];

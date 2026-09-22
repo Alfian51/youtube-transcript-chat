@@ -150,3 +150,66 @@ export async function getVideoTranscript(
 
   return [];
 }
+
+/**
+ * Mengekstrak daftar chapter / timestamp resmi yang dicantumkan pembuat video di deskripsi.
+ * Contoh format di deskripsi:
+ * 01:23 = Pendahuluan
+ * 03:45 Tutorial Dasar
+ */
+export function extractChaptersFromDescription(description: string): TranscriptItem[] {
+  if (!description) return [];
+  const lines = description.split("\n");
+  const items: TranscriptItem[] = [];
+  const timeRegex = /(?:(?:(\d{1,2}):)?(\d{1,2}):(\d{2}))/;
+
+  for (const line of lines) {
+    const match = line.match(timeRegex);
+    if (match) {
+      const hours = match[1] ? parseInt(match[1], 10) : 0;
+      const mins = parseInt(match[2], 10);
+      const secs = parseInt(match[3], 10);
+      const offset = hours * 3600 + mins * 60 + secs;
+      const text = cleanTranscriptText(
+        line.replace(timeRegex, "").replace(/[-=:–—|]/g, " ")
+      );
+      if (text && text.length > 2) {
+        items.push({ offset, text });
+      }
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Menghasilkan segmen transcript fallback cerdas dari judul dan ringkasan deskripsi video
+ * jika YouTube memblokir pengambilan subtitle (misalnya di lingkungan server cloud Vercel).
+ */
+export function createFallbackTranscriptFromVideo(
+  title: string,
+  description: string = ""
+): TranscriptItem[] {
+  const items: TranscriptItem[] = [
+    { offset: 0, text: cleanTranscriptText(title) },
+  ];
+
+  if (description) {
+    // Ambil baris-baris deskripsi yang informatif (bukan link atau hashtag)
+    const informativeLines = description
+      .split("\n")
+      .map((l) => cleanTranscriptText(l))
+      .filter((l) => l.length > 15 && !l.startsWith("http") && !l.startsWith("#"))
+      .slice(0, 5);
+
+    informativeLines.forEach((text, idx) => {
+      items.push({
+        offset: (idx + 1) * 25,
+        text,
+      });
+    });
+  }
+
+  return items;
+}
+

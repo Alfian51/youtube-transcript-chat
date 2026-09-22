@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchYouTubeVideos } from "@/lib/youtube";
-import { getVideoTranscript } from "@/lib/transcript";
+import { searchYouTubeVideos, getVideoDetailsBatch } from "@/lib/youtube";
+import {
+  getVideoTranscript,
+  extractChaptersFromDescription,
+  createFallbackTranscriptFromVideo,
+} from "@/lib/transcript";
 import { findMatchesInTranscript, findSemanticMatches } from "@/lib/search";
 import { VideoSearchResult } from "@/types";
 
@@ -50,32 +54,59 @@ export async function GET(request: NextRequest) {
       return NextResponse.json([]);
     }
 
-    // 2. Jalankan proses transcript + matching secara paralel dengan batas concurrency (3 video sekaligus)
+    // 2. Ambil detail deskripsi video secara batch (1 request cepat untuk semua video)
+    const videoIds = videos.map((v) => v.videoId);
+    const detailsMap = await getVideoDetailsBatch(videoIds);
+
+    // 3. Jalankan proses transcript + matching secara paralel dengan batas concurrency
     const processedResults = await pMap(
       videos,
       async (video) => {
         try {
-          // Ambil transcript video (dengan in-memory caching 1 jam agar hemat network)
-          const transcript = await getVideoTranscript(video.videoId);
+          const details = detailsMap.get(video.videoId);
+          const description = details?.description || video.description || "";
+          const fullTitle = details?.title || video.title;
 
+          // Coba ambil transcript asli
+          let transcript = await getVideoTranscript(video.videoId);
+
+          // Jika transcript tidak tersedia (misal video tanpa CC atau diblokir anti-bot di cloud IP)
           if (!transcript || transcript.length === 0) {
-            return null;
+            // A. Ambil chapter timestamp resmi dari deskripsi
+            const chapters = extractChaptersFromDescription(description);
+            if (chapters.length > 0) {
+              transcript = chapters;
+            } else {
+              // B. Buat segmen representatif dari judul & deskripsi
+              transcript = createFallbackTranscriptFromVideo(fullTitle, description);
+            }
           }
 
-          // Pilih metode pencarian: exact match atau AI semantic match
-          const matches =
+          // Pencocokan kata kunci (exact atau semantic)
+          let matches =
             mode === "semantic"
               ? await findSemanticMatches(transcript, query)
               : findMatchesInTranscript(transcript, query);
 
-          // Jika tidak ada match pada transcript, exclude video ini
+          // Jika exact match tidak menemukan kata persis sama di transcript, gunakan semantic/fuzzy match
+          if ((!matches || matches.length === 0) && transcript.length > 0) {
+            matches = await findSemanticMatches(transcript, query);
+          }
+
+          // Jika masih belum ada kecocokan potongan spesifik, sediakan titik awal video (00:00)
+          // agar video yang relevan dari YouTube tetap dapat ditampilkan dan diputar oleh pengguna
           if (!matches || matches.length === 0) {
-            return null;
+            matches = [
+              {
+                timestamp: 0,
+                text: `${fullTitle}`,
+              },
+            ];
           }
 
           const result: VideoSearchResult = {
             videoId: video.videoId,
-            title: video.title,
+            title: fullTitle,
             matches,
           };
 
@@ -88,7 +119,7 @@ export async function GET(request: NextRequest) {
       3 // Concurrency limit
     );
 
-    // 3. Filter keluar video yang null (tidak punya transcript / tidak punya match)
+    // 4. Filter keluar video yang null
     const finalResults: VideoSearchResult[] = processedResults.filter(
       (res): res is VideoSearchResult => res !== null
     );
