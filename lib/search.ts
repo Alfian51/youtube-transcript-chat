@@ -162,7 +162,11 @@ export async function findSemanticMatches(
     const isGemini =
       process.env.AI_PROVIDER === "gemini" ||
       apiKey.startsWith("AIza") ||
+      apiKey.startsWith("AQ.") ||
       !apiKey.startsWith("sk-");
+
+    // Key format AQ. dari AI Studio menggunakan Bearer token auth, bukan ?key= query param
+    const useBearerAuth = apiKey.startsWith("AQ.") || (!apiKey.startsWith("AIza") && !apiKey.startsWith("sk-"));
 
     const prompt = `Anda adalah sistem evaluasi pencarian semantik video.
 Tugas: Temukan potongan transcript yang maknanya relevan, menjawab, atau membahas topik dari Query pengguna (pencocokan semantik/makna, BUKAN hanya kata yang persis sama).
@@ -184,10 +188,21 @@ Instruksi Output:
     let responseJsonText = "";
 
     if (isGemini) {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      // Dukung dua format autentikasi:
+      // - AIza... → query param ?key= (Google Cloud API Key)
+      // - AQ....  → Authorization: Bearer header (AI Studio OAuth token)
+      const geminiModel = "gemini-2.0-flash";
+      const baseEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+      const endpoint = useBearerAuth ? baseEndpoint : `${baseEndpoint}?key=${apiKey}`;
+
+      const geminiHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (useBearerAuth) {
+        geminiHeaders["Authorization"] = `Bearer ${apiKey}`;
+      }
+
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: geminiHeaders,
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
