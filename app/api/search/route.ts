@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchYouTubeVideos, getVideoDetailsBatch } from "@/lib/youtube";
+import { searchYouTubeVideos, getVideoDetailsBatch, isShortVideo } from "@/lib/youtube";
 import {
   getVideoTranscript,
   extractChaptersFromDescription,
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // 1. Cari video relevan di YouTube (maksimal 6 video)
+    // 1. Cari video relevan di YouTube (maksimal 6 video reguler, tanpa shorts)
     const videos = await searchYouTubeVideos(query, 6);
 
     if (!videos || videos.length === 0) {
@@ -58,9 +58,24 @@ export async function GET(request: NextRequest) {
     const videoIds = videos.map((v) => v.videoId);
     const detailsMap = await getVideoDetailsBatch(videoIds);
 
+    // Filter keluar video kategori Shorts (durasi <= 65 detik atau memuat indikator Shorts)
+    const regularVideos = videos.filter((video) => {
+      const details = detailsMap.get(video.videoId);
+      return !isShortVideo({
+        title: details?.title || video.title,
+        description: details?.description || video.description,
+        durationSec: details?.durationSec || video.durationSec,
+        tags: details?.tags,
+      });
+    });
+
+    if (regularVideos.length === 0) {
+      return NextResponse.json([]);
+    }
+
     // 3. Jalankan proses transcript + matching secara paralel dengan batas concurrency
     const processedResults = await pMap(
-      videos,
+      regularVideos,
       async (video) => {
         try {
           const details = detailsMap.get(video.videoId);

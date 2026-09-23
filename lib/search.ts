@@ -311,3 +311,94 @@ function fallbackSemanticMatch(
 
   return matches;
 }
+
+/**
+ * Membuat prompt pencarian keyword yang dioptimasi untuk model AI / LLM.
+ *
+ * Aturan Output:
+ * - Hanya timestamp dan kalimat lengkap
+ * - Jangan ada pembuka, penutup, atau penjelasan tambahan
+ * - Jika tidak ada, tuliskan: "Tidak ada: ${keyword}"
+ */
+export const createOptimizedPrompt = (keyword: string, transcript: string): string => {
+  return `Cari SEMUA kemunculan kata/frasa: "${keyword}" dalam transcript ini.
+
+OUTPUT HARUS:
+- Hanya timestamp dan kalimat lengkap
+- Jangan ada pembuka, penutup, atau penjelasan tambahan
+- Jika tidak ada, tuliskan: "Tidak ada: ${keyword}"
+
+FORMAT OUTPUT (hanya ini):
+[MM:SS] Kalimat lengkap yang memuat kata kunci
+
+CONTOH:
+[02:15] Prabowo adalah calon presiden yang menekankan kedaulatan pangan.
+[05:43] Menurut Prabowo, kebijakan ekonomi harus berpihak kepada rakyat kecil.
+[1:23:45] Prabowo menjawab pertanyaan tentang rencana pembangunan infrastruktur.
+
+TRANSCRIPT:
+${transcript}`;
+};
+
+/**
+ * Mengubah daftar segmen transcript menjadi format teks ber-timestamp ([MM:SS] atau [H:MM:SS])
+ * yang siap dikirim ke LLM.
+ */
+export function formatTranscriptForPrompt(
+  transcript: { text: string; offset: number }[]
+): string {
+  return transcript
+    .map((item) => {
+      const totalSec = Math.floor(item.offset);
+      const hours = Math.floor(totalSec / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+
+      const timeStr =
+        hours > 0
+          ? `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+          : `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+
+      return `[${timeStr}] ${item.text.trim()}`;
+    })
+    .join("\n");
+}
+
+/**
+ * Mem-parse teks hasil output dari createOptimizedPrompt kembali ke struktur SearchMatch[].
+ */
+export function parseOptimizedPromptOutput(outputText: string): SearchMatch[] {
+  if (!outputText) return [];
+
+  const trimmed = outputText.trim();
+  if (trimmed.toLowerCase().includes("tidak ada:")) {
+    return [];
+  }
+
+  const matches: SearchMatch[] = [];
+  const lines = trimmed.split(/\r?\n/);
+
+  for (const line of lines) {
+    const cleanLine = line.trim();
+    if (!cleanLine) continue;
+
+    // Regex mencakup format [MM:SS] atau [H:MM:SS] / [HH:MM:SS] diikuti kalimat
+    const match = cleanLine.match(/^\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]\s*(?:".*?"\s*→\s*)?(.*)$/);
+    if (match) {
+      const hours = match[1] ? parseInt(match[1], 10) : 0;
+      const minutes = parseInt(match[2], 10);
+      const seconds = parseInt(match[3], 10);
+      const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+      const text = (match[4] || "").trim();
+
+      if (text) {
+        matches.push({
+          timestamp: totalSeconds,
+          text,
+        });
+      }
+    }
+  }
+
+  return matches;
+}
