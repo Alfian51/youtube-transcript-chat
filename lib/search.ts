@@ -34,16 +34,27 @@ export function findMatchesInTranscript(
     const currentItem = transcript[i];
     const currentText = currentItem.text.toLowerCase();
 
-    // Periksa apakah segmen ini mengandung kata kunci
-    if (currentText.includes(cleanKeyword)) {
-      // Hindari duplikasi jika segmen berdekatan (< 4 detik) sudah dicatat
+    // Periksa segmen saat ini atau kombinasi segmen berdekatan (sliding window)
+    // agar frasa yang terpotong jeda baris subtitle YouTube tetap terdeteksi presisi
+    const next1 = transcript[i + 1]?.text?.toLowerCase() || "";
+    const next2 = transcript[i + 2]?.text?.toLowerCase() || "";
+    const combined2 = `${currentText} ${next1}`.trim();
+    const combined3 = `${currentText} ${next1} ${next2}`.trim();
+
+    const isMatch =
+      currentText.includes(cleanKeyword) ||
+      combined2.includes(cleanKeyword) ||
+      combined3.includes(cleanKeyword);
+
+    if (isMatch) {
+      // Hindari duplikasi hanya jika segmen sangat berdekatan (< 4 detik) pada kalimat yang sama
       if (currentItem.offset - lastMatchedOffset < 4) {
         continue;
       }
 
-      // Ambil segmen sebelum (-1), saat ini, dan sesudah (+1) untuk memberi konteks
+      // Gabungkan segmen sebelum (-1), saat ini, dan sesudah (+1 atau +2) agar konteks kalimat utuh
       const startIdx = Math.max(0, i - 1);
-      const endIdx = Math.min(transcript.length - 1, i + 1);
+      const endIdx = Math.min(transcript.length - 1, i + 2);
 
       const contextItems = transcript.slice(startIdx, endIdx + 1);
       let contextText = contextItems
@@ -51,7 +62,6 @@ export function findMatchesInTranscript(
         .filter(Boolean)
         .join(" ");
 
-      // Tambahkan ellipsis jika ada konteks sebelumnya / sesudahnya
       if (startIdx > 0) {
         contextText = "... " + contextText;
       }
@@ -169,7 +179,8 @@ export async function findSemanticMatches(
     const useBearerAuth = apiKey.startsWith("AQ.") || (!apiKey.startsWith("AIza") && !apiKey.startsWith("sk-"));
 
     const prompt = `Anda adalah sistem evaluasi pencarian semantik video.
-Tugas: Temukan potongan transcript yang maknanya relevan, menjawab, atau membahas topik dari Query pengguna (pencocokan semantik/makna, BUKAN hanya kata yang persis sama).
+Tugas: Temukan SEMUA potongan transcript yang maknanya relevan, menjawab, atau membahas topik dari Query pengguna (pencocokan semantik/makna, BUKAN hanya kata yang persis sama).
+PENTING: Jangan hanya mengembalikan 1 potongan jika ada beberapa bagian berbeda yang relevan. Kembalikan semua kemunculan yang relevan.
 Contoh: Query "penyebab harga naik" sangat relevan dengan kalimat "kenaikan harga bahan pokok terjadi akibat gagal panen".
 
 Query Pengguna: "${cleanQuery}"
@@ -180,8 +191,8 @@ ${chunksToSend
   .join("\n")}
 
 Instruksi Output:
-- Kembalikan HANYA JSON array dari potongan yang relevan.
-- Setiap objek harus memiliki: "index" (number ID potongan), "offset" (detik), dan "text" (teks ringkas yang relevan).
+- Kembalikan SEMUA potongan yang relevan dalam format JSON array.
+- Setiap objek harus memiliki: "index" (number ID potongan), "offset" (detik), dan "text" (teks ucapan asli yang relevan).
 - Jika tidak ada potongan yang relevan secara makna, kembalikan [].
 - Format JSON: [{"index": 0, "offset": 12, "text": "..."}]`;
 

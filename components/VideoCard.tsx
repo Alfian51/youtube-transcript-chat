@@ -21,9 +21,14 @@ export default function VideoCard({
 }: VideoCardProps) {
   return (
     <div className="mb-4 rounded-lg border border-gray-200">
-      <div className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-4 py-2.5">
-        <span aria-hidden>🎬</span>
-        <h3 className="text-sm font-semibold text-navy">{result.title}</h3>
+      <div className="flex items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-4 py-2.5">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <span aria-hidden>🎬</span>
+          <h3 className="text-sm font-semibold text-navy truncate" title={result.title}>{result.title}</h3>
+        </div>
+        <span className="shrink-0 text-xs font-semibold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+          {result.matches.length} kemunculan
+        </span>
       </div>
       <div className="divide-y divide-gray-100">
         {result.matches.map((match, idx) => {

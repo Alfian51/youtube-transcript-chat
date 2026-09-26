@@ -3,7 +3,6 @@ import { searchYouTubeVideos, getVideoDetailsBatch, isShortVideo } from "@/lib/y
 import {
   getVideoTranscript,
   extractChaptersFromDescription,
-  createFallbackTranscriptFromVideo,
 } from "@/lib/transcript";
 import { findMatchesInTranscript, findSemanticMatches } from "@/lib/search";
 import { VideoSearchResult } from "@/types";
@@ -82,41 +81,38 @@ export async function GET(request: NextRequest) {
           const description = details?.description || video.description || "";
           const fullTitle = details?.title || video.title;
 
-          // Coba ambil transcript asli
+          // Coba ambil transcript asli (subtitle / closed captions ucapan video)
           let transcript = await getVideoTranscript(video.videoId);
 
-          // Jika transcript tidak tersedia (misal video tanpa CC atau diblokir anti-bot di cloud IP)
+          // Jika transcript otomatis tidak tersedia, cek apakah kreator menulis chapter resmi di deskripsi
           if (!transcript || transcript.length === 0) {
-            // A. Ambil chapter timestamp resmi dari deskripsi
             const chapters = extractChaptersFromDescription(description);
             if (chapters.length > 0) {
               transcript = chapters;
-            } else {
-              // B. Buat segmen representatif dari judul & deskripsi
-              transcript = createFallbackTranscriptFromVideo(fullTitle, description);
             }
           }
 
-          // Pencocokan kata kunci (exact atau semantic)
+          // Jika video tidak memiliki transkrip ucapan asli / chapter resmi, lewati video ini
+          // agar tidak menampilkan menit perkiraan atau teks deskripsi palsu
+          if (!transcript || transcript.length === 0) {
+            return null;
+          }
+
+          // Pencocokan kata kunci pada ucapan di dalam video
           let matches =
             mode === "semantic"
               ? await findSemanticMatches(transcript, query)
               : findMatchesInTranscript(transcript, query);
 
-          // Jika exact match tidak menemukan kata persis sama di transcript, gunakan semantic/fuzzy match
-          if ((!matches || matches.length === 0) && transcript.length > 0) {
+          // Jika exact match tidak menemukan frasa yang persis, coba semantic search
+          if ((!matches || matches.length === 0) && mode === "exact") {
             matches = await findSemanticMatches(transcript, query);
           }
 
-          // Jika masih belum ada kecocokan potongan spesifik, sediakan titik awal video (00:00)
-          // agar video yang relevan dari YouTube tetap dapat ditampilkan dan diputar oleh pengguna
+          // Hanya tampilkan video jika benar-benar ada kata kunci yang diucapkan di video
+          // JANGAN membuat timestamp palsu 00:00 jika tidak ditemukan
           if (!matches || matches.length === 0) {
-            matches = [
-              {
-                timestamp: 0,
-                text: `${fullTitle}`,
-              },
-            ];
+            return null;
           }
 
           const result: VideoSearchResult = {
