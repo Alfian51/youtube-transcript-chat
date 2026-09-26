@@ -15,6 +15,9 @@ export async function GET(request: NextRequest) {
       AI_API_KEY: process.env.AI_API_KEY
         ? `✅ Ada (${process.env.AI_API_KEY.slice(0, 6)}...)`
         : "❌ TIDAK ADA",
+      SUPADATA_API_KEY: process.env.SUPADATA_API_KEY
+        ? `✅ Ada (${process.env.SUPADATA_API_KEY.slice(0, 6)}...)`
+        : "❌ TIDAK ADA (Wajib di Vercel agar tidak diblokir YouTube)",
       AI_PROVIDER: process.env.AI_PROVIDER || "❌ TIDAK ADA",
     },
     youtubeSearch: null,

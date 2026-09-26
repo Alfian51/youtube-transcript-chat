@@ -60,6 +60,92 @@ const CACHE_TTL_MS = 1000 * 60 * 60; // 1 jam
  * @param options Opsi tambahan seperti bahasa dan retry
  * @returns Promise berisi array { text: string; offset: number } dalam detik
  */
+/**
+ * Mengambil transcript melalui Supadata API (solusi cloud anti-bot untuk Vercel / serverless).
+ * Dapatkan free API key di https://supadata.ai
+ */
+async function fetchTranscriptViaSupadata(videoId: string): Promise<TranscriptItem[]> {
+  const apiKey = process.env.SUPADATA_API_KEY?.trim();
+  if (!apiKey) return [];
+
+  try {
+    const res = await fetch(
+      `https://api.supadata.ai/v1/youtube/transcript?videoId=${encodeURIComponent(videoId)}&text=false`,
+      {
+        headers: {
+          "x-api-key": apiKey,
+        },
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`[Supadata] Gagal fetch transcript (${res.status}):`, errText);
+      return [];
+    }
+
+    const data = await res.json();
+    const rawList = Array.isArray(data?.content)
+      ? data.content
+      : Array.isArray(data?.transcript)
+      ? data.transcript
+      : [];
+
+    const items: TranscriptItem[] = [];
+    for (const item of rawList) {
+      const text = cleanTranscriptText(item.text);
+      if (!text) continue;
+      const rawOffset =
+        item.offset !== undefined
+          ? item.offset
+          : item.start !== undefined
+          ? item.start
+          : 0;
+      const offset =
+        rawOffset > 500 ? Math.floor(rawOffset / 1000) : Math.floor(rawOffset);
+      items.push({ text, offset });
+    }
+
+    return items;
+  } catch (err) {
+    console.warn(`[Supadata] Terjadi error:`, err);
+    return [];
+  }
+}
+
+/**
+ * Mengambil transcript melalui RapidAPI YouTube Transcript (alternatif proxy cloud).
+ */
+async function fetchTranscriptViaRapidApi(videoId: string): Promise<TranscriptItem[]> {
+  const apiKey = process.env.RAPIDAPI_KEY?.trim();
+  if (!apiKey) return [];
+
+  try {
+    const res = await fetch(
+      `https://youtube-transcriptor.p.rapidapi.com/transcript?video_id=${encodeURIComponent(videoId)}`,
+      {
+        headers: {
+          "x-rapidapi-key": apiKey,
+          "x-rapidapi-host": "youtube-transcriptor.p.rapidapi.com",
+        },
+      }
+    );
+
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list = Array.isArray(data) ? data : data?.transcript || [];
+    return list
+      .map((item: any) => ({
+        text: cleanTranscriptText(item.text || item.transcription || ""),
+        offset: Math.floor(Number(item.start || item.offset || 0)),
+      }))
+      .filter((i: TranscriptItem) => !!i.text);
+  } catch (err) {
+    console.warn(`[RapidAPI] Terjadi error:`, err);
+    return [];
+  }
+}
+
 export async function getVideoTranscript(
   videoId: string,
   options: GetVideoTranscriptOptions = {}
@@ -79,6 +165,25 @@ export async function getVideoTranscript(
     return cached.items;
   }
 
+  // 2. Jika SUPADATA_API_KEY tersedia, prioritaskan (sangat stabil di cloud Vercel)
+  if (process.env.SUPADATA_API_KEY?.trim()) {
+    const supaItems = await fetchTranscriptViaSupadata(cleanVideoId);
+    if (supaItems.length > 0) {
+      transcriptCache.set(cacheKey, { items: supaItems, timestamp: Date.now() });
+      return supaItems;
+    }
+  }
+
+  // 3. Jika RAPIDAPI_KEY tersedia, gunakan RapidAPI
+  if (process.env.RAPIDAPI_KEY?.trim()) {
+    const rapidItems = await fetchTranscriptViaRapidApi(cleanVideoId);
+    if (rapidItems.length > 0) {
+      transcriptCache.set(cacheKey, { items: rapidItems, timestamp: Date.now() });
+      return rapidItems;
+    }
+  }
+
+  // 4. Default: Menggunakan scraping langsung (bekerja mulus di lingkungan lokal/IP perumahan)
   let attempt = 0;
   while (attempt <= maxRetries) {
     try {
@@ -87,7 +192,7 @@ export async function getVideoTranscript(
       });
 
       if (!Array.isArray(rawTranscripts) || rawTranscripts.length === 0) {
-        return [];
+        break;
       }
 
       // Deteksi apakah respon menggunakan milidetik (srv3 InnerTube)
@@ -118,8 +223,6 @@ export async function getVideoTranscript(
 
       return items;
     } catch (err: any) {
-      // Error permanen: video tidak punya caption atau tidak tersedia
-      // Tidak perlu retry, langsung return [] agar aman dan tidak crash.
       if (
         err instanceof YoutubeTranscriptDisabledError ||
         err instanceof YoutubeTranscriptNotAvailableError ||
@@ -129,7 +232,7 @@ export async function getVideoTranscript(
         console.warn(
           `[getVideoTranscript] Video "${cleanVideoId}" tidak memiliki transcript yang tersedia (${err.constructor.name}).`
         );
-        return [];
+        break;
       }
 
       attempt++;
@@ -138,11 +241,9 @@ export async function getVideoTranscript(
         console.warn(
           `[getVideoTranscript] Gagal mengambil transcript untuk video "${cleanVideoId}" setelah ${maxRetries} retry: ${err?.message || err}`
         );
-        // Selalu return [] saat gagal, jangan crash
-        return [];
+        break;
       }
 
-      // Jeda exponential backoff sebelum mencoba lagi
       const delay = retryDelayMs * Math.pow(2, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
